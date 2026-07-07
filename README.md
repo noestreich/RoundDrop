@@ -20,6 +20,9 @@ Hintergrund.
   Gilt nur bei aktivierter Eckenrundung; ohne Rundung bleibt das Eingabeformat.
 - **Ecken abrunden:** an/aus. Aus = nur verkleinern, komprimieren, umbenennen.
   JPEGs werden dabei zusätzlich mit `jpegoptim` nachoptimiert (falls installiert).
+- **Ohne Rundung:** wahlweise das Eingabeformat beibehalten oder alles
+  **in JPEG umwandeln** (Transparenz wird dabei auf Weiß gelegt).
+- **Qualität:** 1–100 %, gilt für JPEG, WebP und HEIC (Standard 82).
 - **Verkleinern auf max. n px:** begrenzt die längere Bildkante (Standard 2500 px),
   proportional, hochwertig, niemals vergrößern. Abschaltbar per Checkbox.
 - **Dateinamen bereinigen:** `Täst Bild (2026) übel.png` → `Taest_Bild_2026_uebel-rund.webp`
@@ -65,12 +68,14 @@ Benötigt nur die Xcode-Kommandozeilenwerkzeuge:
 ## Kommandozeile (optional)
 
 ```bash
-RoundDrop.app/Contents/MacOS/RoundDrop [--round|--no-round] [--png|--webp] [--lossless] \
-    [--radius=22.37] [--quality=0.82] [--max=2500] [--keep-name] bild1.jpg bild2.png …
+RoundDrop.app/Contents/MacOS/RoundDrop [--round|--no-round|--jpeg] [--png|--webp] \
+    [--keep-format] [--lossless] [--radius=22.37] [--quality=0.82] [--max=2500] \
+    [--keep-name] bild1.jpg bild2.png …
 ```
 
 `--max=0` schaltet das Verkleinern aus, `--keep-name` lässt Dateinamen unangetastet,
-`--no-round` überspringt die Eckenrundung (Ausgabe im Eingabeformat).
+`--no-round` überspringt die Eckenrundung (Ausgabe im Eingabeformat),
+`--jpeg` überspringt die Rundung und wandelt alles nach JPEG.
 
 ## Technik
 

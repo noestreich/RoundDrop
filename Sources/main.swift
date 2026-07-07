@@ -22,7 +22,8 @@ struct Settings {
     var format: OutputFormat = .webp
     var roundingEnabled: Bool = true    // Ecken abrunden; sonst nur verkleinern + komprimieren
     var radiusPercent: Double = 22.37   // Apple-Squircle (System-Icons), continuous corners
-    var quality: Double = 0.82          // nur für WebP (lossy)
+    var quality: Double = 0.82          // für WebP, JPEG und HEIC
+    var convertToJPEG: Bool = false     // ohne Rundung: nach JPEG wandeln statt Eingabeformat behalten
     var optimizeLossy: Bool = true      // PNG: pngquant-Quantisierung erlauben (wie ImageOptim „lossy“)
     var resizeEnabled: Bool = true      // auf maxEdge verkleinern (nie vergrößern)
     var maxEdge: Int = 2500             // maximale Kantenlänge in Pixeln
@@ -35,6 +36,7 @@ struct Settings {
         if let g = d.object(forKey: "roundingEnabled") as? Bool { s.roundingEnabled = g }
         if let r = d.object(forKey: "radiusPercent") as? Double { s.radiusPercent = r }
         if let q = d.object(forKey: "quality") as? Double { s.quality = q }
+        if let j = d.object(forKey: "convertToJPEG") as? Bool { s.convertToJPEG = j }
         if let l = d.object(forKey: "optimizeLossy") as? Bool { s.optimizeLossy = l }
         if let e = d.object(forKey: "resizeEnabled") as? Bool { s.resizeEnabled = e }
         if let m = d.object(forKey: "maxEdge") as? Int, m > 0 { s.maxEdge = m }
@@ -48,6 +50,7 @@ struct Settings {
         d.set(roundingEnabled, forKey: "roundingEnabled")
         d.set(radiusPercent, forKey: "radiusPercent")
         d.set(quality, forKey: "quality")
+        d.set(convertToJPEG, forKey: "convertToJPEG")
         d.set(optimizeLossy, forKey: "optimizeLossy")
         d.set(resizeEnabled, forKey: "resizeEnabled")
         d.set(maxEdge, forKey: "maxEdge")
@@ -183,6 +186,28 @@ func freeOutputURL(for input: URL, suffix: String, fileExtension: String, cleanN
     return candidate
 }
 
+// JPEG kennt keine Transparenz – Bilder mit Alphakanal vorher auf Weiß legen,
+// sonst würde ImageIO sie auf Schwarz reduzieren.
+func flattenedOntoWhite(_ image: CGImage) -> CGImage {
+    switch image.alphaInfo {
+    case .none, .noneSkipLast, .noneSkipFirst:
+        return image
+    default:
+        break
+    }
+    let rect = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+    guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+          let ctx = CGContext(
+              data: nil, width: image.width, height: image.height,
+              bitsPerComponent: 8, bytesPerRow: 0, space: space,
+              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+    else { return image }
+    ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+    ctx.fill(rect)
+    ctx.draw(image, in: rect)
+    return ctx.makeImage() ?? image
+}
+
 func sourceUTI(of url: URL) -> String? {
     guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
     return CGImageSourceGetType(source) as String?
@@ -222,9 +247,25 @@ func process(_ input: URL, settings: Settings) -> ProcessResult {
         return ProcessResult(input: input, output: outURL, error: nil)
     }
 
-    // Ohne Rundung: Eingabeformat beibehalten, nur verkleinern + komprimieren,
+    // Ohne Rundung: nur verkleinern + komprimieren,
     // Suffix = Pixel-Limit (wie beim alten Verkleinerungs-Droplet), z. B. „-2500“
     let suffix = settings.resizeEnabled ? "-\(settings.maxEdge)" : "-opt"
+
+    // Wahlweise alles nach JPEG wandeln (mit einstellbarer Qualität) …
+    if settings.convertToJPEG {
+        let outURL = freeOutputURL(for: input, suffix: suffix, fileExtension: "jpg",
+                                   cleanName: settings.cleanNames)
+        if let error = writeImageIO(flattenedOntoWhite(image), to: outURL,
+                                    uti: UTType.jpeg.identifier, quality: settings.quality) {
+            return fail(error)
+        }
+        if let jpegoptim = findTool("jpegoptim") {
+            runTool(jpegoptim, ["-s", "--quiet", outURL.path])
+        }
+        return ProcessResult(input: input, output: outURL, error: nil)
+    }
+
+    // … oder das Eingabeformat beibehalten
     let srcUTI = sourceUTI(of: input) ?? UTType.png.identifier
     let writableUTIs = (CGImageDestinationCopyTypeIdentifiers() as? [String]) ?? []
     let outURL: URL
@@ -363,6 +404,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var radiusField: NSTextField!
     private var formatPopup: NSPopUpButton!
     private var roundCheckbox: NSButton!
+    private var noRoundPopup: NSPopUpButton!
+    private var qualityField: NSTextField!
     private var optimizeCheckbox: NSButton!
     private var resizeCheckbox: NSButton!
     private var maxEdgeField: NSTextField!
@@ -407,7 +450,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func buildWindow() {
-        let content = NSView(frame: NSRect(x: 0, y: 0, width: 380, height: 420))
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 380, height: 480))
 
         let drop = DropView(frame: .zero)
         drop.translatesAutoresizingMaskIntoConstraints = false
@@ -454,6 +497,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let percentLabel = label("%  (22,37 = Apple-Icons)", size: 12, weight: .regular)
         percentLabel.textColor = .secondaryLabelColor
 
+        let noRoundLabel = label("Ohne Rundung:", size: 12, weight: .regular)
+        noRoundPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        noRoundPopup.translatesAutoresizingMaskIntoConstraints = false
+        noRoundPopup.addItems(withTitles: ["Eingabeformat beibehalten", "in JPEG umwandeln"])
+        noRoundPopup.selectItem(at: settings.convertToJPEG ? 1 : 0)
+        noRoundPopup.target = self
+        noRoundPopup.action = #selector(settingsChanged)
+
+        let qualityLabel = label("Qualität:", size: 12, weight: .regular)
+        qualityField = NSTextField(string: String(Int((settings.quality * 100).rounded())))
+        qualityField.translatesAutoresizingMaskIntoConstraints = false
+        qualityField.alignment = .right
+        qualityField.target = self
+        qualityField.action = #selector(settingsChanged)
+        let qualityHint = label("%  (JPEG · WebP · HEIC)", size: 12, weight: .regular)
+        qualityHint.textColor = .secondaryLabelColor
+
         resizeCheckbox = NSButton(checkboxWithTitle: "Verkleinern auf max.",
                                   target: self, action: #selector(settingsChanged))
         resizeCheckbox.translatesAutoresizingMaskIntoConstraints = false
@@ -488,6 +548,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusLabel.lineBreakMode = .byTruncatingMiddle
 
         for v: NSView in [drop, formatPopup, roundCheckbox, radiusLabel, radiusField, percentLabel,
+                          noRoundLabel, noRoundPopup, qualityLabel, qualityField, qualityHint,
                           resizeCheckbox, maxEdgeField, pixelLabel,
                           optimizeCheckbox, cleanNamesCheckbox, statusLabel] {
             content.addSubview(v)
@@ -515,9 +576,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             percentLabel.centerYAnchor.constraint(equalTo: radiusField.centerYAnchor),
             percentLabel.leadingAnchor.constraint(equalTo: radiusField.trailingAnchor, constant: 6),
 
+            noRoundLabel.centerYAnchor.constraint(equalTo: noRoundPopup.centerYAnchor),
+            noRoundLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            noRoundPopup.topAnchor.constraint(equalTo: radiusField.bottomAnchor, constant: 10),
+            noRoundPopup.leadingAnchor.constraint(equalTo: noRoundLabel.trailingAnchor, constant: 8),
+            noRoundPopup.widthAnchor.constraint(equalToConstant: 220),
+
+            qualityLabel.centerYAnchor.constraint(equalTo: qualityField.centerYAnchor),
+            qualityLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            qualityField.topAnchor.constraint(equalTo: noRoundPopup.bottomAnchor, constant: 10),
+            qualityField.leadingAnchor.constraint(equalTo: qualityLabel.trailingAnchor, constant: 8),
+            qualityField.widthAnchor.constraint(equalToConstant: 50),
+            qualityHint.centerYAnchor.constraint(equalTo: qualityField.centerYAnchor),
+            qualityHint.leadingAnchor.constraint(equalTo: qualityField.trailingAnchor, constant: 6),
+
             resizeCheckbox.centerYAnchor.constraint(equalTo: maxEdgeField.centerYAnchor),
             resizeCheckbox.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
-            maxEdgeField.topAnchor.constraint(equalTo: radiusField.bottomAnchor, constant: 10),
+            maxEdgeField.topAnchor.constraint(equalTo: qualityField.bottomAnchor, constant: 10),
             maxEdgeField.leadingAnchor.constraint(equalTo: resizeCheckbox.trailingAnchor, constant: 8),
             maxEdgeField.widthAnchor.constraint(equalToConstant: 60),
             pixelLabel.centerYAnchor.constraint(equalTo: maxEdgeField.centerYAnchor),
@@ -558,14 +633,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateControlAvailability() {
         let rounding = roundCheckbox.state == .on
         radiusField.isEnabled = rounding
-        // Ohne Rundung wird das Format der Eingabedatei beibehalten
+        // Format-Auswahl (WebP/PNG) gilt nur mit Rundung; ohne Rundung greift das Popup „Ohne Rundung“
         formatPopup.isEnabled = rounding
+        noRoundPopup.isEnabled = !rounding
     }
 
     @objc private func settingsChanged() {
         settings.format = formatPopup.indexOfSelectedItem == 0 ? .webp : .png
         settings.roundingEnabled = roundCheckbox.state == .on
+        settings.convertToJPEG = noRoundPopup.indexOfSelectedItem == 1
         settings.optimizeLossy = optimizeCheckbox.state == .on
+        if let q = Int(qualityField.stringValue), q >= 1, q <= 100 {
+            settings.quality = Double(q) / 100
+        } else {
+            qualityField.stringValue = String(Int((settings.quality * 100).rounded()))
+        }
         settings.resizeEnabled = resizeCheckbox.state == .on
         settings.cleanNames = cleanNamesCheckbox.state == .on
         let value = radiusField.stringValue.replacingOccurrences(of: ",", with: ".")
@@ -633,6 +715,8 @@ if !cliArgs.isEmpty {
         else if arg == "--keep-name" { settings.cleanNames = false }
         else if arg == "--round" { settings.roundingEnabled = true }
         else if arg == "--no-round" { settings.roundingEnabled = false }
+        else if arg == "--jpeg" { settings.roundingEnabled = false; settings.convertToJPEG = true }
+        else if arg == "--keep-format" { settings.convertToJPEG = false }
         else if arg.hasPrefix("--max=") {
             let m = Int(arg.dropFirst("--max=".count)) ?? 0
             settings.resizeEnabled = m >= 16
