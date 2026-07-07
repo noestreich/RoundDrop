@@ -497,30 +497,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func buildWindow() {
-        let content = NSView(frame: NSRect(x: 0, y: 0, width: 380, height: 480))
+        let windowWidth: CGFloat = 440
 
+        // Drop-Fläche mit mittig zentriertem Text
         let drop = DropView(frame: .zero)
-        drop.translatesAutoresizingMaskIntoConstraints = false
         drop.onDrop = { [weak self] urls in self?.handle(urls) }
 
         let title = label("Bilder hier ablegen", size: 15, weight: .semibold)
-        title.alignment = .center
         let subtitle = label("verkleinern · komprimieren · optional runde Ecken", size: 11, weight: .regular)
         subtitle.textColor = .secondaryLabelColor
-        subtitle.alignment = .center
-
-        drop.addSubview(title)
-        drop.addSubview(subtitle)
+        let dropText = NSStackView(views: [title, subtitle])
+        dropText.orientation = .vertical
+        dropText.alignment = .centerX
+        dropText.spacing = 5
+        dropText.translatesAutoresizingMaskIntoConstraints = false
+        drop.addSubview(dropText)
         NSLayoutConstraint.activate([
-            title.centerXAnchor.constraint(equalTo: drop.centerXAnchor),
-            title.centerYAnchor.constraint(equalTo: drop.centerYAnchor, constant: 10),
-            subtitle.centerXAnchor.constraint(equalTo: drop.centerXAnchor),
-            subtitle.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 6),
+            dropText.centerXAnchor.constraint(equalTo: drop.centerXAnchor),
+            dropText.centerYAnchor.constraint(equalTo: drop.centerYAnchor),
         ])
 
+        // Rundung
+        roundCheckbox = NSButton(checkboxWithTitle: "Ecken abrunden (Apple-Squircle, transparent)",
+                                 target: self, action: #selector(settingsChanged))
+        roundCheckbox.font = .systemFont(ofSize: 12)
+        roundCheckbox.state = settings.roundingEnabled ? .on : .off
+
         formatPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-        formatPopup.translatesAutoresizingMaskIntoConstraints = false
-        formatPopup.addItems(withTitles: ["WebP (klein, fürs Web)", "PNG"])
+        formatPopup.addItems(withTitles: ["WebP", "PNG"])
         formatPopup.selectItem(at: settings.format == .webp ? 0 : 1)
         formatPopup.target = self
         formatPopup.action = #selector(settingsChanged)
@@ -529,145 +533,144 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             formatPopup.selectItem(at: 1)
         }
 
-        roundCheckbox = NSButton(checkboxWithTitle: "Ecken abrunden (Apple-Squircle, transparenter Hintergrund)",
-                                 target: self, action: #selector(settingsChanged))
-        roundCheckbox.translatesAutoresizingMaskIntoConstraints = false
-        roundCheckbox.font = .systemFont(ofSize: 12)
-        roundCheckbox.state = settings.roundingEnabled ? .on : .off
+        radiusField = numberField(String(format: "%.2f", settings.radiusPercent), width: 55)
+        let radiusRow = row([label("Format:", size: 12, weight: .regular), formatPopup,
+                             spacer(10),
+                             label("Radius:", size: 12, weight: .regular), radiusField,
+                             hint("%")], indent: 18)
+        radiusRow.toolTip = "22,37 % = Apple-System-Icons; Prozent der kürzeren Bildkante"
 
-        let radiusLabel = label("Eckenradius:", size: 12, weight: .regular)
-        radiusField = NSTextField(string: String(format: "%.2f", settings.radiusPercent))
-        radiusField.translatesAutoresizingMaskIntoConstraints = false
-        radiusField.alignment = .right
-        radiusField.target = self
-        radiusField.action = #selector(settingsChanged)
-        let percentLabel = label("%  (22,37 = Apple-Icons)", size: 12, weight: .regular)
-        percentLabel.textColor = .secondaryLabelColor
-
-        let noRoundLabel = label("Ohne Rundung:", size: 12, weight: .regular)
         noRoundPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-        noRoundPopup.translatesAutoresizingMaskIntoConstraints = false
         noRoundPopup.addItems(withTitles: ["Eingabeformat beibehalten", "in JPEG umwandeln"])
         noRoundPopup.selectItem(at: settings.convertToJPEG ? 1 : 0)
         noRoundPopup.target = self
         noRoundPopup.action = #selector(settingsChanged)
+        let noRoundRow = row([label("Ohne Rundung:", size: 12, weight: .regular), noRoundPopup])
 
-        let qualityLabel = label("Qualität:", size: 12, weight: .regular)
-        qualityField = NSTextField(string: String(Int((settings.quality * 100).rounded())))
-        qualityField.translatesAutoresizingMaskIntoConstraints = false
-        qualityField.alignment = .right
-        qualityField.target = self
-        qualityField.action = #selector(settingsChanged)
-        let qualityHint = label("%  (JPEG · WebP · HEIC)", size: 12, weight: .regular)
-        qualityHint.textColor = .secondaryLabelColor
-
+        // Verkleinern & Qualität
         resizeCheckbox = NSButton(checkboxWithTitle: "Verkleinern auf max.",
                                   target: self, action: #selector(settingsChanged))
-        resizeCheckbox.translatesAutoresizingMaskIntoConstraints = false
         resizeCheckbox.font = .systemFont(ofSize: 12)
         resizeCheckbox.state = settings.resizeEnabled ? .on : .off
-        maxEdgeField = NSTextField(string: String(settings.maxEdge))
-        maxEdgeField.translatesAutoresizingMaskIntoConstraints = false
-        maxEdgeField.alignment = .right
-        maxEdgeField.target = self
-        maxEdgeField.action = #selector(settingsChanged)
-        let pixelLabel = label("px Kantenlänge (nie vergrößern)", size: 12, weight: .regular)
-        pixelLabel.textColor = .secondaryLabelColor
+        maxEdgeField = numberField(String(settings.maxEdge), width: 60)
+        let resizeRow = row([resizeCheckbox, maxEdgeField, hint("px längste Kante")])
+        resizeRow.toolTip = "Proportional verkleinern; kleinere Bilder werden nie vergrößert"
 
-        cleanNamesCheckbox = NSButton(checkboxWithTitle: "Dateinamen bereinigen (Leer-/Sonderzeichen → _)",
-                                      target: self, action: #selector(settingsChanged))
-        cleanNamesCheckbox.translatesAutoresizingMaskIntoConstraints = false
-        cleanNamesCheckbox.font = .systemFont(ofSize: 12)
-        cleanNamesCheckbox.state = settings.cleanNames ? .on : .off
+        qualityField = numberField(String(Int((settings.quality * 100).rounded())), width: 45)
+        let qualityRow = row([label("Qualität:", size: 12, weight: .regular), qualityField,
+                              hint("%  ·  JPEG / WebP / HEIC")])
 
-        optimizeCheckbox = NSButton(checkboxWithTitle: "PNG stark komprimieren (pngquant, wie ImageOptim)",
+        // Kompression & Namen
+        optimizeCheckbox = NSButton(checkboxWithTitle: "PNG stark komprimieren (pngquant)",
                                     target: self, action: #selector(settingsChanged))
-        optimizeCheckbox.translatesAutoresizingMaskIntoConstraints = false
         optimizeCheckbox.font = .systemFont(ofSize: 12)
         optimizeCheckbox.state = settings.optimizeLossy ? .on : .off
-        if findTool("pngquant") == nil {
-            optimizeCheckbox.isEnabled = false
-            optimizeCheckbox.title = "PNG stark komprimieren (pngquant fehlt: brew install pngquant)"
-        }
+        optimizeCheckbox.toolTip = "Verlustarme Farbquantisierung wie in ImageOptim; danach verlustfreie Nachoptimierung"
+        if findTool("pngquant") == nil { optimizeCheckbox.isEnabled = false }
+
+        cleanNamesCheckbox = NSButton(checkboxWithTitle: "Dateinamen bereinigen (Sonderzeichen → _)",
+                                      target: self, action: #selector(settingsChanged))
+        cleanNamesCheckbox.font = .systemFont(ofSize: 12)
+        cleanNamesCheckbox.state = settings.cleanNames ? .on : .off
+        cleanNamesCheckbox.toolTip = "z. B. „Täst Bild (1).png“ → „Taest_Bild_1“"
+
+        // Werkzeug-Status
+        let separator = NSBox()
+        separator.boxType = .separator
+
+        let pngLossless = findTool("oxipng") != nil ? "oxipng"
+                        : (findTool("optipng") != nil ? "optipng" : "oxipng")
+        let toolsRow = row([hint("Werkzeuge:"),
+                            toolBadge("cwebp", purpose: "WebP-Export"),
+                            toolBadge("pngquant", purpose: "PNG-Kompression"),
+                            toolBadge(pngLossless, purpose: "PNG verlustfrei"),
+                            toolBadge("jpegoptim", purpose: "JPEG-Optimierung")])
 
         statusLabel = label("Bereit.", size: 11, weight: .regular)
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.lineBreakMode = .byTruncatingMiddle
 
-        for v: NSView in [drop, formatPopup, roundCheckbox, radiusLabel, radiusField, percentLabel,
-                          noRoundLabel, noRoundPopup, qualityLabel, qualityField, qualityHint,
-                          resizeCheckbox, maxEdgeField, pixelLabel,
-                          optimizeCheckbox, cleanNamesCheckbox, statusLabel] {
-            content.addSubview(v)
-        }
+        // Gesamtaufbau
+        let mainStack = NSStackView(views: [drop,
+                                            roundCheckbox, radiusRow, noRoundRow,
+                                            resizeRow, qualityRow,
+                                            optimizeCheckbox, cleanNamesCheckbox,
+                                            separator, toolsRow, statusLabel])
+        mainStack.orientation = .vertical
+        mainStack.alignment = .leading
+        mainStack.spacing = 10
+        mainStack.translatesAutoresizingMaskIntoConstraints = false
+        mainStack.setCustomSpacing(14, after: drop)
+        mainStack.setCustomSpacing(14, after: cleanNamesCheckbox)
+        mainStack.setCustomSpacing(14, after: separator)
 
+        let content = NSView()
+        content.addSubview(mainStack)
         NSLayoutConstraint.activate([
-            drop.topAnchor.constraint(equalTo: content.topAnchor, constant: 10),
-            drop.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 10),
-            drop.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -10),
-            drop.heightAnchor.constraint(equalToConstant: 180),
-
-            formatPopup.topAnchor.constraint(equalTo: drop.bottomAnchor, constant: 12),
-            formatPopup.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
-            formatPopup.widthAnchor.constraint(equalToConstant: 200),
-
-            roundCheckbox.topAnchor.constraint(equalTo: formatPopup.bottomAnchor, constant: 10),
-            roundCheckbox.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
-            roundCheckbox.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -20),
-
-            radiusLabel.centerYAnchor.constraint(equalTo: radiusField.centerYAnchor),
-            radiusLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 38),
-            radiusField.topAnchor.constraint(equalTo: roundCheckbox.bottomAnchor, constant: 8),
-            radiusField.leadingAnchor.constraint(equalTo: radiusLabel.trailingAnchor, constant: 8),
-            radiusField.widthAnchor.constraint(equalToConstant: 60),
-            percentLabel.centerYAnchor.constraint(equalTo: radiusField.centerYAnchor),
-            percentLabel.leadingAnchor.constraint(equalTo: radiusField.trailingAnchor, constant: 6),
-
-            noRoundLabel.centerYAnchor.constraint(equalTo: noRoundPopup.centerYAnchor),
-            noRoundLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
-            noRoundPopup.topAnchor.constraint(equalTo: radiusField.bottomAnchor, constant: 10),
-            noRoundPopup.leadingAnchor.constraint(equalTo: noRoundLabel.trailingAnchor, constant: 8),
-            noRoundPopup.widthAnchor.constraint(equalToConstant: 220),
-
-            qualityLabel.centerYAnchor.constraint(equalTo: qualityField.centerYAnchor),
-            qualityLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
-            qualityField.topAnchor.constraint(equalTo: noRoundPopup.bottomAnchor, constant: 10),
-            qualityField.leadingAnchor.constraint(equalTo: qualityLabel.trailingAnchor, constant: 8),
-            qualityField.widthAnchor.constraint(equalToConstant: 50),
-            qualityHint.centerYAnchor.constraint(equalTo: qualityField.centerYAnchor),
-            qualityHint.leadingAnchor.constraint(equalTo: qualityField.trailingAnchor, constant: 6),
-
-            resizeCheckbox.centerYAnchor.constraint(equalTo: maxEdgeField.centerYAnchor),
-            resizeCheckbox.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
-            maxEdgeField.topAnchor.constraint(equalTo: qualityField.bottomAnchor, constant: 10),
-            maxEdgeField.leadingAnchor.constraint(equalTo: resizeCheckbox.trailingAnchor, constant: 8),
-            maxEdgeField.widthAnchor.constraint(equalToConstant: 60),
-            pixelLabel.centerYAnchor.constraint(equalTo: maxEdgeField.centerYAnchor),
-            pixelLabel.leadingAnchor.constraint(equalTo: maxEdgeField.trailingAnchor, constant: 6),
-
-            cleanNamesCheckbox.topAnchor.constraint(equalTo: maxEdgeField.bottomAnchor, constant: 10),
-            cleanNamesCheckbox.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
-            cleanNamesCheckbox.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -20),
-
-            optimizeCheckbox.topAnchor.constraint(equalTo: cleanNamesCheckbox.bottomAnchor, constant: 10),
-            optimizeCheckbox.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
-            optimizeCheckbox.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -20),
-
-            statusLabel.topAnchor.constraint(equalTo: optimizeCheckbox.bottomAnchor, constant: 12),
-            statusLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
-            statusLabel.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+            mainStack.topAnchor.constraint(equalTo: content.topAnchor, constant: 12),
+            mainStack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
+            mainStack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
+            mainStack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -14),
+            drop.widthAnchor.constraint(equalTo: mainStack.widthAnchor),
+            drop.heightAnchor.constraint(equalToConstant: 150),
+            separator.widthAnchor.constraint(equalTo: mainStack.widthAnchor),
+            statusLabel.widthAnchor.constraint(equalTo: mainStack.widthAnchor),
         ])
 
         updateControlAvailability()
 
         window = NSWindow(
-            contentRect: content.frame,
+            contentRect: NSRect(x: 0, y: 0, width: windowWidth, height: 100),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered, defer: false)
         window.title = "RoundDrop"
         window.contentView = content
+        content.widthAnchor.constraint(equalToConstant: windowWidth).isActive = true
+        content.layoutSubtreeIfNeeded()
+        window.setContentSize(NSSize(width: windowWidth, height: content.fittingSize.height))
         window.center()
         window.makeKeyAndOrderFront(nil)
+    }
+
+    private func row(_ views: [NSView], indent: CGFloat = 0) -> NSStackView {
+        let stack = NSStackView(views: views)
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 6
+        stack.edgeInsets.left = indent
+        return stack
+    }
+
+    private func spacer(_ width: CGFloat) -> NSView {
+        let v = NSView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.widthAnchor.constraint(equalToConstant: width).isActive = true
+        return v
+    }
+
+    private func hint(_ text: String) -> NSTextField {
+        let l = label(text, size: 12, weight: .regular)
+        l.textColor = .secondaryLabelColor
+        return l
+    }
+
+    private func numberField(_ value: String, width: CGFloat) -> NSTextField {
+        let f = NSTextField(string: value)
+        f.alignment = .right
+        f.target = self
+        f.action = #selector(settingsChanged)
+        f.widthAnchor.constraint(equalToConstant: width).isActive = true
+        return f
+    }
+
+    private func toolBadge(_ tool: String, purpose: String) -> NSTextField {
+        let path = findTool(tool)
+        let l = label("\(path != nil ? "✓" : "✗") \(tool)", size: 11, weight: .medium)
+        l.textColor = path != nil ? .systemGreen : .systemRed
+        l.toolTip = path != nil
+            ? "\(purpose) – gefunden: \(path!)"
+            : "\(purpose) – fehlt, Installation: brew install \(tool)"
+        return l
     }
 
     private func label(_ text: String, size: CGFloat, weight: NSFont.Weight) -> NSTextField {
