@@ -415,6 +415,7 @@ final class ResultRowView: NSView {
     var onClose: (() -> Void)?
 
     private let icon = NSImageView()
+    private let revealIcon = NSImageView()
     private let nameLabel: NSTextField
     private let subLabel: NSTextField
     private static let sizeFormatter: ByteCountFormatter = {
@@ -431,8 +432,14 @@ final class ResultRowView: NSView {
 
         nameLabel.font = .monospacedSystemFont(ofSize: 12, weight: .bold)
         nameLabel.lineBreakMode = .byTruncatingMiddle
-        nameLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        // Lupe = „Klick zeigt die Datei im Finder“; erscheint, sobald die Datei fertig ist
+        revealIcon.image = NSImage(systemSymbolName: "magnifyingglass",
+                                   accessibilityDescription: "im Finder zeigen")
+        revealIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 10, weight: .medium)
+        revealIcon.contentTintColor = .tertiaryLabelColor
+        revealIcon.isHidden = true
         subLabel.font = .systemFont(ofSize: 11)
         subLabel.textColor = .secondaryLabelColor
         subLabel.lineBreakMode = .byTruncatingTail
@@ -449,7 +456,12 @@ final class ResultRowView: NSView {
         close.isBordered = false
         close.contentTintColor = .tertiaryLabelColor
 
-        let textStack = NSStackView(views: [nameLabel, subLabel])
+        let nameRow = NSStackView(views: [nameLabel, revealIcon])
+        nameRow.orientation = .horizontal
+        nameRow.alignment = .centerY
+        nameRow.spacing = 5
+
+        let textStack = NSStackView(views: [nameRow, subLabel])
         textStack.orientation = .vertical
         textStack.alignment = .leading
         textStack.spacing = 2
@@ -480,6 +492,7 @@ final class ResultRowView: NSView {
             icon.image = NSImage(systemSymbolName: "checkmark.circle.fill",
                                  accessibilityDescription: "fertig")
             icon.contentTintColor = .systemGreen
+            revealIcon.isHidden = false
 
             let inBytes = fileBytes(inputURL)
             let outBytes = fileBytes(output)
@@ -912,18 +925,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Liste automatisch ausklappen, sobald verarbeitet wird
         if resultsScroll.isHidden { setResultsExpanded(true) }
 
+        // Neuer Stapel kommt als Block nach oben, aber in Ablage-Reihenfolge:
+        // oberste Zeile wird zuerst abgearbeitet (von oben nach unten)
         var rows: [ResultRowView] = []
-        for url in urls {
+        for (index, url) in urls.enumerated() {
             let rowView = ResultRowView(inputURL: url)
             rowView.onClose = { [weak self, weak rowView] in
                 guard let self, let rowView else { return }
                 rowView.removeFromSuperview()
                 self.updateResultsCount()
             }
-            resultsStack.insertArrangedSubview(rowView, at: 0)
+            resultsStack.insertArrangedSubview(rowView, at: index)
             rowView.widthAnchor.constraint(equalTo: resultsStack.widthAnchor).isActive = true
             rows.append(rowView)
         }
+        resultsScroll.contentView.scroll(to: .zero)
+        resultsScroll.reflectScrolledClipView(resultsScroll.contentView)
         // Liste begrenzen, damit sie nicht endlos wächst
         while resultsStack.arrangedSubviews.count > 200 {
             resultsStack.arrangedSubviews.last?.removeFromSuperview()
