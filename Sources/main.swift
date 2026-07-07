@@ -420,6 +420,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var quitRequested = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        buildMenu()
         buildWindow()
         NSApp.activate(ignoringOtherApps: true)
         if !pendingURLs.isEmpty {
@@ -447,6 +448,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             handle(urls)
         }
+    }
+
+    // Ohne Hauptmenü gibt es keine Tastenkürzel (⌘Q, ⌘W, ⌘C …) – bei einer
+    // rein per Code gebauten App muss es von Hand angelegt werden.
+    private func buildMenu() {
+        let mainMenu = NSMenu()
+
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "Über RoundDrop",
+                        action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
+                        keyEquivalent: "")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "RoundDrop ausblenden",
+                        action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        let hideOthers = appMenu.addItem(withTitle: "Andere ausblenden",
+                                         action: #selector(NSApplication.hideOtherApplications(_:)),
+                                         keyEquivalent: "h")
+        hideOthers.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "RoundDrop beenden",
+                        action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let appItem = NSMenuItem(title: "RoundDrop", action: nil, keyEquivalent: "")
+        appItem.submenu = appMenu
+        mainMenu.addItem(appItem)
+
+        let fileMenu = NSMenu(title: "Ablage")
+        fileMenu.addItem(withTitle: "Schließen",
+                         action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        let fileItem = NSMenuItem(title: "Ablage", action: nil, keyEquivalent: "")
+        fileItem.submenu = fileMenu
+        mainMenu.addItem(fileItem)
+
+        let editMenu = NSMenu(title: "Bearbeiten")
+        editMenu.addItem(withTitle: "Widerrufen", action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: "Wiederholen", action: Selector(("redo:")), keyEquivalent: "Z")
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Ausschneiden", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Kopieren", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Einsetzen", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Alles auswählen",
+                         action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        let editItem = NSMenuItem(title: "Bearbeiten", action: nil, keyEquivalent: "")
+        editItem.submenu = editMenu
+        mainMenu.addItem(editItem)
+
+        NSApp.mainMenu = mainMenu
     }
 
     private func buildWindow() {
