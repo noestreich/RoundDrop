@@ -327,7 +327,7 @@ func writeWebP(_ image: CGImage, to url: URL, quality: Double) -> String? {
         task.arguments = [
             "-q", String(Int(quality * 100)),
             "-alpha_q", "100",
-            "-m", "6",
+            "-m", "4",
             "-metadata", "none",
             tmp.path, "-o", url.path,
         ]
@@ -396,6 +396,129 @@ final class DropView: NSView {
     }
 }
 
+// MARK: - Ergebniszeile
+
+func fileBytes(_ url: URL) -> Int64 {
+    let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
+    return (attrs?[.size] as? Int64) ?? 0
+}
+
+// NSScrollView verankert nicht-geflippte Inhalte unten – für eine Liste,
+// die oben beginnt, braucht das Dokument-View umgedrehte Koordinaten.
+final class FlippedView: NSView {
+    override var isFlipped: Bool { true }
+}
+
+final class ResultRowView: NSView {
+    let inputURL: URL
+    private(set) var outputURL: URL?
+    var onClose: (() -> Void)?
+
+    private let icon = NSImageView()
+    private let nameLabel: NSTextField
+    private let subLabel: NSTextField
+    private static let sizeFormatter: ByteCountFormatter = {
+        let f = ByteCountFormatter()
+        f.countStyle = .file
+        return f
+    }()
+
+    init(inputURL: URL) {
+        self.inputURL = inputURL
+        nameLabel = NSTextField(labelWithString: inputURL.lastPathComponent)
+        subLabel = NSTextField(labelWithString: "wird verarbeitet …")
+        super.init(frame: .zero)
+
+        nameLabel.font = .monospacedSystemFont(ofSize: 12, weight: .bold)
+        nameLabel.lineBreakMode = .byTruncatingMiddle
+        nameLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        subLabel.font = .systemFont(ofSize: 11)
+        subLabel.textColor = .secondaryLabelColor
+        subLabel.lineBreakMode = .byTruncatingTail
+        subLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        subLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        icon.image = NSImage(systemSymbolName: "clock", accessibilityDescription: "in Arbeit")
+        icon.contentTintColor = .secondaryLabelColor
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 15, weight: .regular)
+
+        let close = NSButton(image: NSImage(systemSymbolName: "xmark",
+                                            accessibilityDescription: "Zeile entfernen")!,
+                             target: self, action: #selector(closeTapped))
+        close.isBordered = false
+        close.contentTintColor = .tertiaryLabelColor
+
+        let textStack = NSStackView(views: [nameLabel, subLabel])
+        textStack.orientation = .vertical
+        textStack.alignment = .leading
+        textStack.spacing = 2
+        textStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let h = NSStackView(views: [icon, textStack, close])
+        h.orientation = .horizontal
+        h.alignment = .centerY
+        h.spacing = 8
+        h.distribution = .fill
+        h.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(h)
+        NSLayoutConstraint.activate([
+            h.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            h.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            h.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            h.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+        ])
+        toolTip = "Klick: Datei im Finder zeigen"
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func finish(_ result: ProcessResult) {
+        if let output = result.output {
+            outputURL = output
+            nameLabel.stringValue = output.lastPathComponent
+            icon.image = NSImage(systemSymbolName: "checkmark.circle.fill",
+                                 accessibilityDescription: "fertig")
+            icon.contentTintColor = .systemGreen
+
+            let inBytes = fileBytes(inputURL)
+            let outBytes = fileBytes(output)
+            let inText = Self.sizeFormatter.string(fromByteCount: inBytes)
+            let outText = Self.sizeFormatter.string(fromByteCount: outBytes)
+            var percentText = ""
+            var savedALot = false
+            if inBytes > 0 {
+                let percent = Int((Double(outBytes - inBytes) / Double(inBytes) * 100).rounded())
+                percentText = "  (\(percent > 0 ? "+" : "−")\(abs(percent)) %)"
+                savedALot = percent <= -10
+            }
+            let text = NSMutableAttributedString(
+                string: "\(inText)  →  \(outText)",
+                attributes: [.foregroundColor: NSColor.secondaryLabelColor,
+                             .font: NSFont.systemFont(ofSize: 11)])
+            text.append(NSAttributedString(
+                string: percentText,
+                attributes: [.foregroundColor: savedALot ? NSColor.systemGreen : NSColor.secondaryLabelColor,
+                             .font: NSFont.systemFont(ofSize: 11)]))
+            subLabel.attributedStringValue = text
+        } else {
+            icon.image = NSImage(systemSymbolName: "xmark.circle.fill",
+                                 accessibilityDescription: "Fehler")
+            icon.contentTintColor = .systemRed
+            subLabel.stringValue = result.error ?? "Fehler"
+            subLabel.textColor = .systemRed
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if let url = outputURL {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
+    }
+
+    @objc private func closeTapped() { onClose?() }
+}
+
 // MARK: - App
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -410,6 +533,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var resizeCheckbox: NSButton!
     private var maxEdgeField: NSTextField!
     private var cleanNamesCheckbox: NSButton!
+    private var progressBar: NSProgressIndicator!
+    private var resultsDisclosure: NSButton!
+    private var resultsCountLabel: NSTextField!
+    private var resultsScroll: NSScrollView!
+    private var resultsStack: NSStackView!
+    private var totalFiles = 0
+    private var doneFiles = 0
+    private var failedFiles = 0
     private var settings = Settings.load()
     private let queue = DispatchQueue(label: "rounddrop.processing", qos: .userInitiated)
     // Dateien, die ankommen, bevor das Fenster gebaut ist (das „Öffnen“-Event
@@ -590,12 +721,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.lineBreakMode = .byTruncatingMiddle
 
+        progressBar = NSProgressIndicator()
+        progressBar.style = .bar
+        progressBar.isIndeterminate = false
+        progressBar.minValue = 0
+        progressBar.controlSize = .small
+        progressBar.isHidden = true
+
+        // Ergebnisliste (ausklappbar)
+        resultsDisclosure = NSButton()
+        resultsDisclosure.bezelStyle = .disclosure
+        resultsDisclosure.setButtonType(.pushOnPushOff)
+        resultsDisclosure.title = ""
+        resultsDisclosure.target = self
+        resultsDisclosure.action = #selector(disclosureToggled)
+
+        resultsCountLabel = label("Ergebnisse", size: 12, weight: .medium)
+        resultsCountLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let clearButton = NSButton(title: "Leeren", target: self, action: #selector(clearResults))
+        clearButton.bezelStyle = .rounded
+        clearButton.controlSize = .small
+        clearButton.font = .systemFont(ofSize: 11)
+
+        let resultsHeader = row([resultsDisclosure, resultsCountLabel, clearButton])
+        resultsHeader.distribution = .fill
+
+        resultsStack = NSStackView()
+        resultsStack.orientation = .vertical
+        resultsStack.alignment = .leading
+        resultsStack.spacing = 1
+        resultsStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let resultsDoc = FlippedView()
+        resultsDoc.translatesAutoresizingMaskIntoConstraints = false
+        resultsDoc.addSubview(resultsStack)
+
+        resultsScroll = NSScrollView()
+        resultsScroll.hasVerticalScroller = true
+        resultsScroll.borderType = .bezelBorder
+        resultsScroll.drawsBackground = true
+        resultsScroll.backgroundColor = .textBackgroundColor
+        resultsScroll.documentView = resultsDoc
+        NSLayoutConstraint.activate([
+            resultsStack.topAnchor.constraint(equalTo: resultsDoc.topAnchor),
+            resultsStack.leadingAnchor.constraint(equalTo: resultsDoc.leadingAnchor),
+            resultsStack.trailingAnchor.constraint(equalTo: resultsDoc.trailingAnchor),
+            resultsStack.bottomAnchor.constraint(equalTo: resultsDoc.bottomAnchor),
+            resultsDoc.widthAnchor.constraint(equalTo: resultsScroll.contentView.widthAnchor),
+        ])
+
+        let expanded = UserDefaults.standard.bool(forKey: "resultsExpanded")
+        resultsDisclosure.state = expanded ? .on : .off
+        resultsScroll.isHidden = !expanded
+
         // Gesamtaufbau
         let mainStack = NSStackView(views: [drop,
                                             roundCheckbox, radiusRow, noRoundRow,
                                             resizeRow, qualityRow,
                                             optimizeCheckbox, cleanNamesCheckbox,
-                                            separator, toolsRow, statusLabel])
+                                            separator, toolsRow, progressBar, statusLabel,
+                                            resultsHeader, resultsScroll])
         mainStack.orientation = .vertical
         mainStack.alignment = .leading
         mainStack.spacing = 10
@@ -615,6 +801,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             drop.heightAnchor.constraint(equalToConstant: 150),
             separator.widthAnchor.constraint(equalTo: mainStack.widthAnchor),
             statusLabel.widthAnchor.constraint(equalTo: mainStack.widthAnchor),
+            progressBar.widthAnchor.constraint(equalTo: mainStack.widthAnchor),
+            resultsHeader.widthAnchor.constraint(equalTo: mainStack.widthAnchor),
+            resultsScroll.widthAnchor.constraint(equalTo: mainStack.widthAnchor),
+            resultsScroll.heightAnchor.constraint(equalToConstant: 190),
         ])
 
         updateControlAvailability()
@@ -718,37 +908,105 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handle(_ urls: [URL]) {
         settingsChanged()
         let current = settings
-        statusLabel.stringValue = "Verarbeite \(urls.count) Datei(en) …"
+
+        // Liste automatisch ausklappen, sobald verarbeitet wird
+        if resultsScroll.isHidden { setResultsExpanded(true) }
+
+        var rows: [ResultRowView] = []
+        for url in urls {
+            let rowView = ResultRowView(inputURL: url)
+            rowView.onClose = { [weak self, weak rowView] in
+                guard let self, let rowView else { return }
+                rowView.removeFromSuperview()
+                self.updateResultsCount()
+            }
+            resultsStack.insertArrangedSubview(rowView, at: 0)
+            rowView.widthAnchor.constraint(equalTo: resultsStack.widthAnchor).isActive = true
+            rows.append(rowView)
+        }
+        // Liste begrenzen, damit sie nicht endlos wächst
+        while resultsStack.arrangedSubviews.count > 200 {
+            resultsStack.arrangedSubviews.last?.removeFromSuperview()
+        }
+        updateResultsCount()
+
+        totalFiles += urls.count
+        progressBar.maxValue = Double(totalFiles)
+        progressBar.isHidden = false
         statusLabel.textColor = .secondaryLabelColor
+        statusLabel.stringValue = "Verarbeite \(doneFiles + 1) von \(totalFiles) …"
+
         runningBatches += 1
         queue.async {
-            let results = urls.map { process($0, settings: current) }
-            DispatchQueue.main.async {
-                self.runningBatches -= 1
-                self.show(results)
-                if self.quitRequested && self.runningBatches == 0 {
-                    NSApp.reply(toApplicationShouldTerminate: true)
-                }
+            for (url, rowView) in zip(urls, rows) {
+                let result = process(url, settings: current)
+                DispatchQueue.main.async { self.finishRow(rowView, with: result) }
             }
+            DispatchQueue.main.async { self.batchFinished() }
         }
     }
 
-    private func show(_ results: [ProcessResult]) {
-        let ok = results.filter { $0.output != nil }
-        let failed = results.filter { $0.output == nil }
-        var parts: [String] = []
-        if let last = ok.last, let out = last.output {
-            let size = (try? FileManager.default.attributesOfItem(atPath: out.path)[.size] as? Int) ?? nil
-            let kb = size.map { " (\(($0 + 512) / 1024) KB)" } ?? ""
-            parts.append(ok.count == 1
-                ? "✓ \(out.lastPathComponent)\(kb)"
-                : "✓ \(ok.count) Dateien erstellt, zuletzt \(out.lastPathComponent)\(kb)")
+    private func finishRow(_ rowView: ResultRowView, with result: ProcessResult) {
+        doneFiles += 1
+        if result.output == nil { failedFiles += 1 }
+        progressBar.doubleValue = Double(doneFiles)
+        if doneFiles < totalFiles {
+            statusLabel.stringValue = "Verarbeite \(doneFiles + 1) von \(totalFiles) …"
         }
-        if !failed.isEmpty {
-            parts.append("✗ \(failed.count) fehlgeschlagen (\(failed.first?.error ?? "?"))")
+        rowView.finish(result)
+    }
+
+    private func batchFinished() {
+        runningBatches -= 1
+        guard runningBatches == 0 else { return }
+        let okCount = doneFiles - failedFiles
+        if failedFiles > 0 {
+            statusLabel.stringValue = "Fertig: \(okCount) erstellt, \(failedFiles) fehlgeschlagen."
+            statusLabel.textColor = .systemOrange
+        } else {
+            statusLabel.stringValue = "Fertig: \(okCount) Datei(en) erstellt."
+            statusLabel.textColor = .systemGreen
         }
-        statusLabel.stringValue = parts.joined(separator: "  ·  ")
-        statusLabel.textColor = failed.isEmpty ? .systemGreen : .systemOrange
+        progressBar.isHidden = true
+        progressBar.doubleValue = 0
+        totalFiles = 0
+        doneFiles = 0
+        failedFiles = 0
+        if quitRequested {
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+    }
+
+    private func updateResultsCount() {
+        let count = resultsStack.arrangedSubviews.count
+        resultsCountLabel.stringValue = count == 0 ? "Ergebnisse" : "Ergebnisse (\(count))"
+    }
+
+    private func setResultsExpanded(_ expanded: Bool) {
+        resultsDisclosure.state = expanded ? .on : .off
+        resultsScroll.isHidden = !expanded
+        UserDefaults.standard.set(expanded, forKey: "resultsExpanded")
+        resizeWindowToFit()
+    }
+
+    @objc private func disclosureToggled() {
+        setResultsExpanded(resultsDisclosure.state == .on)
+    }
+
+    @objc private func clearResults() {
+        for view in resultsStack.arrangedSubviews { view.removeFromSuperview() }
+        updateResultsCount()
+    }
+
+    private func resizeWindowToFit() {
+        guard let content = window.contentView else { return }
+        content.layoutSubtreeIfNeeded()
+        let newHeight = content.fittingSize.height
+        let contentRect = NSRect(x: 0, y: 0, width: content.frame.width, height: newHeight)
+        var frame = window.frameRect(forContentRect: contentRect)
+        let old = window.frame
+        frame.origin = NSPoint(x: old.origin.x, y: old.maxY - frame.height)
+        window.setFrame(frame, display: true, animate: true)
     }
 }
 
