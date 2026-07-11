@@ -4,7 +4,7 @@ Kleines macOS-Droplet: Bilder ablegen → verkleinert, komprimiert und auf Wunsc
 mit abgerundeten Ecken (Apple-Squircle, „continuous corners“) und transparentem
 Hintergrund.
 
-![RoundDrop-Fenster](docs/fenster.png)
+![RoundDrop-Fenster](docs/fenster.png?=123)
 
 ## Benutzung
 
