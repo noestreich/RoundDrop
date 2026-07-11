@@ -13,5 +13,7 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 swiftc -O -o "$APP/Contents/MacOS/RoundDrop" Sources/main.swift
 
-codesign --force --sign - "$APP"
+SIGN_ID="Developer ID Application: aketo GmbH (9H7F5NMT97)"
+codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP/Contents/MacOS/RoundDrop"
+codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP"
 echo "Fertig: $(pwd)/$APP"
