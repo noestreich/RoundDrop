@@ -8,41 +8,57 @@ Hintergrund.
 
 ## Benutzung
 
-- **Droplet (Standard):** Bilder aufs Dock-Icon oder im Finder auf
-  `RoundDrop.app` ziehen. Die App arbeitet still im Hintergrund
-  (verbleibende Dateien als Dock-Badge), meldet das Ergebnis als
-  Mitteilung und beendet sich selbst. Beim ersten Mal fragt macOS
-  einmalig nach der Mitteilungs-Erlaubnis.
-- **Fenster:** App per Doppelklick/Dock-Klick starten – dann erscheinen
-  Einstellungen, Fortschritt und Ergebnisliste, und die App bleibt offen.
-  Ein Dock-Klick während einer Hintergrund-Verarbeitung holt das Fenster
-  samt laufender Liste hervor.
-- Ergebnis landet neben dem Original:
-  - mit Eckenrundung als `name-rund.webp` bzw. `name-rund.png`
-  - ohne Eckenrundung im **Format der Eingabedatei** mit Pixel-Suffix,
-    z. B. `name-2500.jpg` (JPEG bleibt JPEG, PNG bleibt PNG, HEIC bleibt HEIC)
+**Droplet (Standard):** Bilder aufs Dock-Icon oder im Finder auf `RoundDrop.app`
+ziehen. Die App arbeitet still im Hintergrund (verbleibende Dateien als
+Dock-Badge), meldet das Ergebnis als Mitteilung und beendet sich selbst.
+Beim ersten Mal fragt macOS einmalig nach der Mitteilungs-Erlaubnis.
+Verarbeitet wird immer mit den zuletzt im Fenster gespeicherten Einstellungen.
+
+**Fenster:** App per Doppelklick bzw. Dock-Klick starten – dann erscheinen
+Einstellungen, Fortschrittsbalken und Ergebnisliste, und die App bleibt offen.
+Ein Dock-Klick während einer Hintergrund-Verarbeitung holt das Fenster samt
+laufender Liste hervor.
+
+**Ergebnisliste:** pro Datei Status (Uhr → grüner Haken bzw. rotes ×),
+Größe „vorher → nachher“ mit Ersparnis in Prozent. Ein Klick auf die Zeile
+(Lupensymbol) zeigt die fertige Datei im Finder, × entfernt den Eintrag,
+„Leeren“ die ganze Liste. Der Bereich lässt sich ein-/ausklappen; die App
+merkt sich den Zustand.
+
+Die Ergebnisdatei landet immer neben dem Original:
+
+| Modus | Ausgabe | Beispiel |
+|---|---|---|
+| Ecken abrunden **an** | WebP oder PNG (transparent), Suffix `-rund` | `logo-rund.webp` |
+| Ecken abrunden **aus** | JPEG (Standard) oder Eingabeformat, Suffix = Pixel-Limit | `foto-2500.jpg` |
+| aus, ohne Verkleinern | wie oben, Suffix `-opt` | `foto-opt.jpg` |
 
 ## Einstellungen (im Fenster)
 
-- **Format:** WebP (klein, ideal fürs Web – braucht `brew install webp`) oder PNG.
-  Gilt nur bei aktivierter Eckenrundung; ohne Rundung bleibt das Eingabeformat.
-- **Ecken abrunden:** an/aus. Aus = nur verkleinern, komprimieren, umbenennen.
-  JPEGs werden dabei zusätzlich mit `jpegoptim` nachoptimiert (falls installiert).
+- **Ecken abrunden:** an/aus. An = Squircle-Ecken + transparenter Hintergrund;
+  aus = nur verkleinern, komprimieren, umbenennen.
+- **Format** (nur mit Rundung): WebP (klein, ideal fürs Web) oder PNG.
+- **Radius:** Prozent der kürzeren Bildkante. `22,37` = der dokumentierte
+  Apple-Squircle der System-Icons. Die Kurve ist immer Apples geglättete
+  „continuous“-Kurve, keine Kreisecken.
 - **Ohne Rundung:** standardmäßig wird alles **in JPEG umgewandelt**
-  (maximale Kompatibilität; Transparenz wird auf Weiß gelegt) – wahlweise
-  lässt sich stattdessen das Eingabeformat beibehalten.
+  (maximale Kompatibilität – HEIC/PNG versteht nicht jeder Empfänger;
+  Transparenz wird auf Weiß gelegt). Wahlweise lässt sich stattdessen das
+  Eingabeformat beibehalten (JPEG bleibt JPEG, PNG bleibt PNG, HEIC bleibt HEIC).
+- **Verkleinern auf max. n px:** begrenzt die längere Bildkante (Standard
+  2500 px), proportional und hochwertig, vergrößert niemals. Abschaltbar.
 - **Qualität:** 1–100 %, gilt für JPEG, WebP und HEIC (Standard 82).
-- **Verkleinern auf max. n px:** begrenzt die längere Bildkante (Standard 2500 px),
-  proportional, hochwertig, niemals vergrößern. Abschaltbar per Checkbox.
-- **Dateinamen bereinigen:** `Täst Bild (2026) übel.png` → `Taest_Bild_2026_uebel-rund.webp`
+- **PNG stark komprimieren:** dieselben Kompressoren wie ImageOptim –
+  `pngquant` (verlustarme Farbquantisierung) plus `oxipng`/`optipng`
+  (verlustfrei). Abgehakt bleibt nur die verlustfreie Stufe aktiv.
+- **Dateinamen bereinigen:** `Täst Bild (2026) übel.png` → `Taest_Bild_2026_uebel-2500.jpg`
   (Umlaute → ae/oe/ue/ss, Akzente entfernt, Leer-/Sonderzeichen → `_`).
-- **Eckenradius:** Prozent der kürzeren Bildkante.
-  `22,37` = der dokumentierte Apple-Squircle der System-Icons.
-  Die Kurve ist immer Apples geglättete „continuous“-Kurve, keine Kreisecken.
-- **PNG stark komprimieren:** nutzt dieselben Kompressoren wie ImageOptim –
-  `pngquant` (verlustarme Farbquantisierung) plus `oxipng`/`optipng` (verlustfrei).
-  Abgehakt bleibt nur die verlustfreie Stufe aktiv.
-  Benötigt `brew install pngquant oxipng`.
+- **Werkzeuge-Zeile:** zeigt grün/rot, welche der vier Kommandozeilen-Helfer
+  installiert sind; der Tooltip nennt bei fehlenden den `brew install`-Befehl.
+
+JPEGs werden zusätzlich mit `jpegoptim` nachoptimiert und von Metadaten
+befreit (falls installiert). Die EXIF-Ausrichtung von iPhone-Fotos wird
+beim Laden korrekt eingerechnet.
 
 ## Download & Installation
 
@@ -82,16 +98,25 @@ RoundDrop.app/Contents/MacOS/RoundDrop [--round|--no-round|--jpeg] [--png|--webp
     [--keep-name] bild1.jpg bild2.png …
 ```
 
-`--max=0` schaltet das Verkleinern aus, `--keep-name` lässt Dateinamen unangetastet,
-`--no-round` überspringt die Eckenrundung (Ausgabe im Eingabeformat),
-`--jpeg` überspringt die Rundung und wandelt alles nach JPEG.
+- `--round` / `--no-round`: Eckenrundung erzwingen/überspringen
+- `--jpeg`: ohne Rundung alles nach JPEG; `--keep-format`: Eingabeformat behalten
+- `--max=2500`: längste Kante begrenzen, `--max=0` schaltet das Verkleinern aus
+- `--lossless`: PNG nur verlustfrei optimieren (ohne pngquant)
+- `--keep-name`: Dateinamen nicht bereinigen
+
+Ohne Flags gelten die zuletzt im Fenster gespeicherten Einstellungen.
 
 ## Technik
 
 - Ein einziges Swift-File ([Sources/main.swift](Sources/main.swift)), AppKit + SwiftUI-Pfad
   (`RoundedRectangle(style: .continuous)`) für die exakte Apple-Kurve.
+- Verkleinern geschieht beim Dekodieren in einem Schritt
+  (`kCGImageSourceThumbnailMaxPixelSize`), inklusive EXIF-Korrektur.
 - WebP-Export über `cwebp` (Homebrew), da macOS-ImageIO WebP nur lesen kann.
   Ohne `cwebp` fällt die App automatisch auf PNG zurück.
 - PNG-Optimierung über `pngquant` + `oxipng` (bzw. `optipng`); fehlende Tools
   werden einfach übersprungen. Messwerte Testbild (640×400-Verlauf):
   237 KB roh → 104 KB verlustfrei → 20 KB mit pngquant → 3,9 KB als WebP.
+- Hintergrund-Modus: Start per Datei-Drop erzeugt kein Fenster; Ergebnis kommt
+  als Systemmitteilung, danach beendet sich die App. Beenden wartet stets,
+  bis laufende Verarbeitungen abgeschlossen sind.
