@@ -23,7 +23,7 @@ struct Settings {
     var roundingEnabled: Bool = true    // Ecken abrunden; sonst nur verkleinern + komprimieren
     var radiusPercent: Double = 22.37   // Apple-Squircle (System-Icons), continuous corners
     var quality: Double = 0.82          // für WebP, JPEG und HEIC
-    var convertToJPEG: Bool = false     // ohne Rundung: nach JPEG wandeln statt Eingabeformat behalten
+    var convertToJPEG: Bool = true      // ohne Rundung: nach JPEG wandeln (HEIC/PNG sind nicht überall kompatibel)
     var optimizeLossy: Bool = true      // PNG: pngquant-Quantisierung erlauben (wie ImageOptim „lossy“)
     var resizeEnabled: Bool = true      // auf maxEdge verkleinern (nie vergrößern)
     var maxEdge: Int = 2500             // maximale Kantenlänge in Pixeln

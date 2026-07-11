@@ -22,8 +22,9 @@ Hintergrund.
   Gilt nur bei aktivierter Eckenrundung; ohne Rundung bleibt das Eingabeformat.
 - **Ecken abrunden:** an/aus. Aus = nur verkleinern, komprimieren, umbenennen.
   JPEGs werden dabei zusätzlich mit `jpegoptim` nachoptimiert (falls installiert).
-- **Ohne Rundung:** wahlweise das Eingabeformat beibehalten oder alles
-  **in JPEG umwandeln** (Transparenz wird dabei auf Weiß gelegt).
+- **Ohne Rundung:** standardmäßig wird alles **in JPEG umgewandelt**
+  (maximale Kompatibilität; Transparenz wird auf Weiß gelegt) – wahlweise
+  lässt sich stattdessen das Eingabeformat beibehalten.
 - **Qualität:** 1–100 %, gilt für JPEG, WebP und HEIC (Standard 82).
 - **Verkleinern auf max. n px:** begrenzt die längere Bildkante (Standard 2500 px),
   proportional, hochwertig, niemals vergrößern. Abschaltbar per Checkbox.
