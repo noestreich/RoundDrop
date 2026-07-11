@@ -8,9 +8,15 @@ Hintergrund.
 
 ## Benutzung
 
-- **Fenster:** App starten, Bilder in die gestrichelte Fläche ziehen.
-- **Droplet:** App ins Dock ziehen, Bilder aufs Dock-Icon fallen lassen
-  (oder im Finder: Bilder auf `RoundDrop.app` ziehen).
+- **Droplet (Standard):** Bilder aufs Dock-Icon oder im Finder auf
+  `RoundDrop.app` ziehen. Die App arbeitet still im Hintergrund
+  (verbleibende Dateien als Dock-Badge), meldet das Ergebnis als
+  Mitteilung und beendet sich selbst. Beim ersten Mal fragt macOS
+  einmalig nach der Mitteilungs-Erlaubnis.
+- **Fenster:** App per Doppelklick/Dock-Klick starten – dann erscheinen
+  Einstellungen, Fortschritt und Ergebnisliste, und die App bleibt offen.
+  Ein Dock-Klick während einer Hintergrund-Verarbeitung holt das Fenster
+  samt laufender Liste hervor.
 - Ergebnis landet neben dem Original:
   - mit Eckenrundung als `name-rund.webp` bzw. `name-rund.png`
   - ohne Eckenrundung im **Format der Eingabedatei** mit Pixel-Suffix,

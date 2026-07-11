@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import ImageIO
 import UniformTypeIdentifiers
+import UserNotifications
 
 // MARK: - Einstellungen
 
@@ -534,7 +535,16 @@ final class ResultRowView: NSView {
 
 // MARK: - App
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+// Eine Datei in der Warteschlange – existiert unabhängig vom Fenster,
+// damit die App auch still im Hintergrund arbeiten kann.
+final class Job {
+    let url: URL
+    var result: ProcessResult?
+    weak var row: ResultRowView?
+    init(url: URL) { self.url = url }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var window: NSWindow!
     private var statusLabel: NSTextField!
     private var radiusField: NSTextField!
@@ -556,21 +566,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var failedFiles = 0
     private var settings = Settings.load()
     private let queue = DispatchQueue(label: "rounddrop.processing", qos: .userInitiated)
-    // Dateien, die ankommen, bevor das Fenster gebaut ist (das „Öffnen“-Event
-    // kann vor applicationDidFinishLaunching eintreffen)
-    private var pendingURLs: [URL] = []
+    // Alle Stapel dieser Sitzung (auch die im Hintergrund verarbeiteten)
+    private var sessionBatches: [[Job]] = []
     // Beenden erst erlauben, wenn keine Verarbeitung mehr läuft (sonst drohen halbfertige Dateien)
     private var runningBatches = 0
     private var quitRequested = false
+    private var askedForNotifications = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
+        UNUserNotificationCenter.current().delegate = self
+        // Kurz abwarten, ob ein „Öffnen“-Event eintrifft (die Reihenfolge ist nicht
+        // garantiert): Start per Datei-Drop → kein Fenster, stille Verarbeitung.
+        // Start per Doppelklick/Dock → Fenster wie gewohnt.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            guard let self else { return }
+            if self.window == nil && self.sessionBatches.isEmpty {
+                self.enterWindowMode()
+            }
+        }
+    }
+
+    // Klick aufs Dock-Icon: Fenster öffnen und laufende/fertige Jobs anzeigen
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        if window == nil { enterWindowMode() }
+        return true
+    }
+
+    private func enterWindowMode() {
+        guard window == nil else { return }
         buildWindow()
         NSApp.activate(ignoringOtherApps: true)
-        if !pendingURLs.isEmpty {
-            let urls = pendingURLs
-            pendingURLs = []
-            handle(urls)
+        NSApp.dockTile.badgeLabel = nil
+        for batch in sessionBatches.reversed() {
+            addRows(for: batch, prepend: false)
+        }
+        if !sessionBatches.isEmpty { setResultsExpanded(true) }
+        updateProgressUI()
+        if runningBatches == 0 && !sessionBatches.isEmpty {
+            statusLabel.stringValue = "Fertig – Details in der Liste."
+            statusLabel.textColor = .systemGreen
         }
     }
 
@@ -587,11 +622,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Wird aufgerufen, wenn Dateien auf das Dock-/Finder-Icon gezogen werden
     func application(_ application: NSApplication, open urls: [URL]) {
-        if window == nil {
-            pendingURLs.append(contentsOf: urls)
-        } else {
-            handle(urls)
-        }
+        handle(urls)
     }
 
     // Ohne Hauptmenü gibt es keine Tastenkürzel (⌘Q, ⌘W, ⌘C …) – bei einer
@@ -919,79 +950,148 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handle(_ urls: [URL]) {
-        settingsChanged()
-        let current = settings
-
-        // Liste automatisch ausklappen, sobald verarbeitet wird
-        if resultsScroll.isHidden { setResultsExpanded(true) }
-
-        // Neuer Stapel kommt als Block nach oben, aber in Ablage-Reihenfolge:
-        // oberste Zeile wird zuerst abgearbeitet (von oben nach unten)
-        var rows: [ResultRowView] = []
-        for (index, url) in urls.enumerated() {
-            let rowView = ResultRowView(inputURL: url)
-            rowView.onClose = { [weak self, weak rowView] in
-                guard let self, let rowView else { return }
-                rowView.removeFromSuperview()
-                self.updateResultsCount()
-            }
-            resultsStack.insertArrangedSubview(rowView, at: index)
-            rowView.widthAnchor.constraint(equalTo: resultsStack.widthAnchor).isActive = true
-            rows.append(rowView)
+        let current: Settings
+        if window != nil {
+            settingsChanged()
+            current = settings
+            if resultsScroll.isHidden { setResultsExpanded(true) }
+        } else {
+            // Hintergrund-Modus: Einstellungen wie zuletzt gespeichert
+            current = Settings.load()
+            requestNotificationPermission()
         }
-        resultsScroll.contentView.scroll(to: .zero)
-        resultsScroll.reflectScrolledClipView(resultsScroll.contentView)
-        // Liste begrenzen, damit sie nicht endlos wächst
-        while resultsStack.arrangedSubviews.count > 200 {
-            resultsStack.arrangedSubviews.last?.removeFromSuperview()
-        }
-        updateResultsCount()
+
+        let batch = urls.map { Job(url: $0) }
+        sessionBatches.append(batch)
+        if window != nil { addRows(for: batch) }
 
         totalFiles += urls.count
-        progressBar.maxValue = Double(totalFiles)
-        progressBar.isHidden = false
-        statusLabel.textColor = .secondaryLabelColor
-        statusLabel.stringValue = "Verarbeite \(doneFiles + 1) von \(totalFiles) …"
+        updateProgressUI()
 
         runningBatches += 1
         queue.async {
-            for (url, rowView) in zip(urls, rows) {
-                let result = process(url, settings: current)
-                DispatchQueue.main.async { self.finishRow(rowView, with: result) }
+            for job in batch {
+                let result = process(job.url, settings: current)
+                DispatchQueue.main.async { self.finish(job, with: result) }
             }
             DispatchQueue.main.async { self.batchFinished() }
         }
     }
 
-    private func finishRow(_ rowView: ResultRowView, with result: ProcessResult) {
+    // Zeilen für einen Stapel anlegen; prepend = neuer Stapel als Block nach oben,
+    // in Ablage-Reihenfolge (oberste Zeile wird zuerst abgearbeitet)
+    private func addRows(for batch: [Job], prepend: Bool = true) {
+        for (index, job) in batch.enumerated() {
+            let rowView = ResultRowView(inputURL: job.url)
+            rowView.onClose = { [weak self, weak rowView] in
+                guard let self, let rowView else { return }
+                rowView.removeFromSuperview()
+                self.updateResultsCount()
+            }
+            if prepend {
+                resultsStack.insertArrangedSubview(rowView, at: index)
+            } else {
+                resultsStack.addArrangedSubview(rowView)
+            }
+            rowView.widthAnchor.constraint(equalTo: resultsStack.widthAnchor).isActive = true
+            job.row = rowView
+            if let result = job.result { rowView.finish(result) }
+        }
+        // Liste begrenzen, damit sie nicht endlos wächst
+        while resultsStack.arrangedSubviews.count > 200 {
+            resultsStack.arrangedSubviews.last?.removeFromSuperview()
+        }
+        updateResultsCount()
+        resultsScroll.contentView.scroll(to: .zero)
+        resultsScroll.reflectScrolledClipView(resultsScroll.contentView)
+    }
+
+    private func updateProgressUI() {
+        if window != nil {
+            progressBar.maxValue = Double(totalFiles)
+            progressBar.doubleValue = Double(doneFiles)
+            progressBar.isHidden = totalFiles == 0 || doneFiles >= totalFiles
+            if doneFiles < totalFiles {
+                statusLabel.textColor = .secondaryLabelColor
+                statusLabel.stringValue = "Verarbeite \(doneFiles + 1) von \(totalFiles) …"
+            }
+        } else {
+            // Ohne Fenster: verbleibende Dateien als Dock-Badge
+            NSApp.dockTile.badgeLabel = totalFiles > doneFiles ? "\(totalFiles - doneFiles)" : nil
+        }
+    }
+
+    private func finish(_ job: Job, with result: ProcessResult) {
+        job.result = result
         doneFiles += 1
         if result.output == nil { failedFiles += 1 }
-        progressBar.doubleValue = Double(doneFiles)
-        if doneFiles < totalFiles {
-            statusLabel.stringValue = "Verarbeite \(doneFiles + 1) von \(totalFiles) …"
-        }
-        rowView.finish(result)
+        job.row?.finish(result)
+        updateProgressUI()
     }
 
     private func batchFinished() {
         runningBatches -= 1
         guard runningBatches == 0 else { return }
         let okCount = doneFiles - failedFiles
-        if failedFiles > 0 {
-            statusLabel.stringValue = "Fertig: \(okCount) erstellt, \(failedFiles) fehlgeschlagen."
-            statusLabel.textColor = .systemOrange
-        } else {
-            statusLabel.stringValue = "Fertig: \(okCount) Datei(en) erstellt."
-            statusLabel.textColor = .systemGreen
-        }
-        progressBar.isHidden = true
-        progressBar.doubleValue = 0
+        let failed = failedFiles
         totalFiles = 0
         doneFiles = 0
         failedFiles = 0
-        if quitRequested {
-            NSApp.reply(toApplicationShouldTerminate: true)
+
+        if window != nil {
+            if failed > 0 {
+                statusLabel.stringValue = "Fertig: \(okCount) erstellt, \(failed) fehlgeschlagen."
+                statusLabel.textColor = .systemOrange
+            } else {
+                statusLabel.stringValue = "Fertig: \(okCount) Datei(en) erstellt."
+                statusLabel.textColor = .systemGreen
+            }
+            progressBar.isHidden = true
+            progressBar.doubleValue = 0
+            if quitRequested { NSApp.reply(toApplicationShouldTerminate: true) }
+        } else {
+            NSApp.dockTile.badgeLabel = nil
+            if quitRequested {
+                NSApp.reply(toApplicationShouldTerminate: true)
+                return
+            }
+            notifyAndQuit(ok: okCount, failed: failed)
         }
+    }
+
+    // MARK: Hintergrund-Modus: Benachrichtigung + automatisches Beenden
+
+    private func requestNotificationPermission() {
+        guard !askedForNotifications else { return }
+        askedForNotifications = true
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+
+    private func notifyAndQuit(ok: Int, failed: Int) {
+        let content = UNMutableNotificationContent()
+        content.title = "RoundDrop"
+        content.body = failed == 0
+            ? (ok == 1 ? "1 Datei erstellt." : "\(ok) Dateien erstellt.")
+            : "\(ok) erstellt, \(failed) fehlgeschlagen."
+        content.sound = .default
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request) { _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                // Nur beenden, wenn nicht inzwischen das Fenster geöffnet
+                // oder ein neuer Stapel abgelegt wurde
+                if self.window == nil && self.runningBatches == 0 {
+                    NSApp.terminate(nil)
+                }
+            }
+        }
+    }
+
+    // Banner auch zeigen, wenn die App gerade im Vordergrund ist
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler:
+                                    @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
     }
 
     private func updateResultsCount() {
